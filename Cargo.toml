@@ -5,8 +5,6 @@ authors = ["Codecrafters <hello@codecrafters.io>"]
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.99"
-bytes = "1.10.1"
-logos = "0.15.1"
-thiserror = "2.0.16"
-tokio = { version = "1.47.1", features = ["full"] }
+anyhow = "1.0.100"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["full"] }

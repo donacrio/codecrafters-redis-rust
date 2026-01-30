@@ -1,16 +1,21 @@
 mod command;
 mod resp;
+mod store;
 
 use anyhow::{Context, Result};
-use core::net::SocketAddr;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::command::execute;
-use crate::resp::parse_command;
+use crate::command::{execute, interpret_command};
+use crate::resp::parse_resp;
+use crate::store::Store;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let store = Arc::new(Store::default());
+
     let listener = TcpListener::bind("127.0.0.1:6379")
         .await
         .context("failed to start TCP listener on port 6379")?;
@@ -20,16 +25,18 @@ async fn main() -> Result<()> {
             .accept()
             .await
             .context("failed to accept connection")?;
+        println!("Socket {} connected", addr);
 
+        let store = store.clone();
         tokio::spawn(async move {
-            if let Err(e) = process_stream(stream, addr).await {
-                println!("Error: {}", e);
-            }
+            process_stream(stream, addr, store)
+                .await
+                .context("Error processing stream")
         });
     }
 }
 
-async fn process_stream(mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
+async fn process_stream(mut stream: TcpStream, addr: SocketAddr, store: Arc<Store>) -> Result<()> {
     let mut buffer: [u8; 512] = [0; 512];
 
     loop {
@@ -45,17 +52,20 @@ async fn process_stream(mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
 
         let bytes = &buffer[..bytes_read];
 
-        let response = match parse_command(bytes).and_then(execute) {
-            Ok(v) => v,
+        let result = match parse_resp(bytes) {
+            Ok(value) => match interpret_command(value) {
+                Ok(command) => execute(command, &store),
+                Err(e) => e.into(),
+            },
             Err(e) => e.into(),
         };
 
-        match stream.write_all(response.to_string().as_bytes()).await {
+        match stream.write_all(result.to_string().as_bytes()).await {
             Ok(()) => {
                 continue;
             }
             Err(e) => {
-                println!("Error writing to {}: {}", addr, e);
+                eprintln!("Error writing to {}: {}", addr, e);
                 break;
             }
         }
