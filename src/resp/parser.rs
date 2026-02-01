@@ -1,6 +1,6 @@
 use super::{error::ParseError, value::Value};
 
-pub struct Parser<'a> {
+pub(super) struct Parser<'a> {
     input: &'a [u8],
     pos: usize,
 }
@@ -11,25 +11,26 @@ impl<'a> Parser<'a> {
     }
 
     fn consume(&mut self) -> Result<u8, ParseError> {
-        let current = self.input.get(self.pos).ok_or(ParseError::UnexpectedEOF)?;
+        let current = self
+            .input
+            .get(self.pos)
+            .copied()
+            .ok_or(ParseError::UnexpectedEOF)?;
         self.pos += 1;
-        Ok(*current)
+        Ok(current)
+    }
+
+    fn expect_byte(&mut self, expected: u8) -> Result<(), ParseError> {
+        let actual = self.consume()?;
+        if actual != expected {
+            return Err(ParseError::ExpectedByte { actual, expected });
+        }
+        Ok(())
     }
 
     fn expect_crlf(&mut self) -> Result<(), ParseError> {
-        match self.consume()? {
-            b'\r' => match self.consume()? {
-                b'\n' => Ok(()),
-                byte => Err(ParseError::ExpectedByte {
-                    actual: byte,
-                    expected: b'\n',
-                }),
-            },
-            byte => Err(ParseError::ExpectedByte {
-                actual: byte,
-                expected: b'\r',
-            }),
-        }
+        self.expect_byte(b'\r')?;
+        self.expect_byte(b'\n')
     }
 
     fn read_line(&mut self) -> Result<&'a [u8], ParseError> {
@@ -74,6 +75,11 @@ impl<'a> Parser<'a> {
 
     fn parse_array(&mut self) -> Result<Value, ParseError> {
         let n = self.read_usize()?;
+        // Protect from user attempting to allocate huge values
+        let remaining = self.input.len() - self.pos;
+        if n > remaining {
+            return Err(ParseError::UnexpectedEOF);
+        }
         let mut values = Vec::with_capacity(n);
         for _ in 0..n {
             let value = self.parse()?;
@@ -96,5 +102,9 @@ impl<'a> Parser<'a> {
             b'-' => self.parse_error(),
             byte => Err(ParseError::UnexpectedByte(byte)),
         }
+    }
+
+    pub fn bytes_consumed(&self) -> usize {
+        self.pos
     }
 }

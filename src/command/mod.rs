@@ -2,31 +2,23 @@ mod command;
 mod execute;
 mod raw;
 
-use crate::resp::Value;
+use crate::{resp::Value, store::Store};
 pub use command::Command;
-use command::CommandValidationError;
-use raw::{RawCommand, RawCommandError};
+use raw::RawCommand;
 
-pub use execute::execute;
-use thiserror::Error;
+use execute::execute;
 
-#[derive(Debug, Error)]
-pub enum InterpretError {
-    #[error("Error parsing input command: {0}")]
-    RawCommandError(#[from] RawCommandError),
-    #[error("Invalid command: {0}")]
-    CommandValidationError(#[from] CommandValidationError),
+fn to_error_value(e: impl std::fmt::Display) -> Value {
+    Value::SimpleError(e.to_string())
 }
 
-impl From<InterpretError> for Value {
-    fn from(value: InterpretError) -> Self {
-        Value::SimpleError(value.to_string())
-    }
+fn interpret_command(value: Value) -> Result<Command, Value> {
+    let raw: RawCommand = value.try_into().map_err(to_error_value)?;
+    raw.try_into().map_err(to_error_value)
 }
 
-pub fn interpret_command(value: Value) -> Result<Command, InterpretError> {
-    let raw_command: RawCommand = value.try_into().map_err(InterpretError::RawCommandError)?;
-    raw_command
-        .try_into()
-        .map_err(InterpretError::CommandValidationError)
+pub(crate) fn handle_value(value: Value, store: &Store) -> Value {
+    interpret_command(value)
+        .map(|command| execute(command, store))
+        .unwrap_or_else(|e| e)
 }
